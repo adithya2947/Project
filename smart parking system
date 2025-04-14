@@ -1,0 +1,78 @@
+import cv2
+import numpy as np
+import pandas as pd
+from ultralytics import YOLO
+
+# Load YOLO model
+model = YOLO('yolov8s.pt')
+
+# Load COCO class labels
+with open("coco.txt", "r") as my_file:
+    class_list = my_file.read().split("\n")
+
+# Define parking areas (modify these coordinates based on your setup)
+parking_areas = [
+    [(100, 200), (200, 200), (200, 300), (100, 300)],  # Parking Spot 1
+    [(220, 200), (320, 200), (320, 300), (220, 300)],  # Parking Spot 2
+    [(340, 200), (440, 200), (440, 300), (340, 300)]   # Parking Spot 3
+]
+
+# Start webcam capture (change to a video file if needed)
+cap = cv2.VideoCapture(0)  # Use webcam
+# cap = cv2.VideoCapture("parking_video.mp4")  # Use a pre-recorded video
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    frame = cv2.resize(frame, (1020, 500))
+
+    # Run YOLOv8 Object Detection
+    results = model.predict(frame)
+    detections = results[0].boxes.data
+    detections_df = pd.DataFrame(detections).astype("float")
+
+    # Parking status
+    occupied_spots = 0
+    total_spots = len(parking_areas)
+
+    # Check each parking spot
+    for area in parking_areas:
+        occupied = False
+        for _, row in detections_df.iterrows():
+            x1, y1, x2, y2, _, class_id = map(int, row[:6])
+            class_name = class_list[class_id]
+
+            if class_name == 'car':
+                # Calculate center of detected car
+                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                
+                # Check if the car is inside a parking spot
+                if cv2.pointPolygonTest(np.array(area, np.int32), (cx, cy), False) >= 0:
+                    occupied = True
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)  # Green box around car
+                    cv2.circle(frame, (cx, cy), 3, (0, 0, 255), -1)  # Red dot at center
+                
+        # Draw parking spot boundaries
+        color = (0, 0, 255) if occupied else (0, 255, 0)  # Red if occupied, Green if empty
+        cv2.polylines(frame, [np.array(area, np.int32)], True, color, 2)
+        
+        if occupied:
+            occupied_spots += 1
+
+    # Display parking status
+    empty_spots = total_spots - occupied_spots
+    cv2.putText(frame, f"Total Spots: {total_spots}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+    cv2.putText(frame, f"Occupied: {occupied_spots}", (50, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+    cv2.putText(frame, f"Empty: {empty_spots}", (50, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+    # Show the output
+    cv2.imshow("Parking Spot Detection", frame)
+
+    # Press 'Esc' to exit
+    if cv2.waitKey(1) & 0xFF == 27:
+        break
+
+cap.release()
+cv2.destroyAllWindows()
